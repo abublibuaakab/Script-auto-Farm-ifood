@@ -1,0 +1,1280 @@
+local Players       = game:GetService("Players")
+local RS            = game:GetService("ReplicatedStorage")
+local Input         = game:GetService("UserInputService")
+local Run           = game:GetService("RunService")
+local PromptService = game:GetService("ProximityPromptService")
+
+local player = Players.LocalPlayer
+local pg     = player:WaitForChild("PlayerGui")
+
+if type(_G.JosueFoodStop)  == "function" then pcall(_G.JosueFoodStop)  end
+if type(_G.Josue87204Stop) == "function" then pcall(_G.Josue87204Stop) end
+
+
+local alive, running, busy = true, false, false
+local token       = 0
+local connections = {}
+
+local state = {
+    destination = nil, object = nil, version = 0,
+    pickupWindow = 0, phase = "coletar", clear = false,
+    requestTime = 0, checkStart = true, finished = nil,
+}
+
+local counters = { coleta = 0, entrega = 0 }
+local activeHold, anchoredRoot, savedAnchor
+
+
+local function path(root, ...)
+    for _, name in ipairs({...}) do root = root and root:FindFirstChild(name) end
+    return root
+end
+
+local function connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(connections, c)
+    return c
+end
+
+local function posOf(o)
+    if typeof(o) ~= "Instance" then return nil end
+    if o:IsA("BasePart")   then return o.Position end
+    if o:IsA("Attachment") then return o.WorldPosition end
+    if o:IsA("ProximityPrompt") then return posOf(o.Parent) end
+    if o:IsA("Model")      then return o:GetPivot().Position end
+end
+
+local function character()
+    local c = player.Character
+    local h = c and c:FindFirstChildOfClass("Humanoid")
+    local r = c and c:FindFirstChild("HumanoidRootPart")
+    if h and r and h.Health > 0 then return c, h, r end
+end
+
+local function isFoodTeam()
+    return player.Team and player.Team.Name == "SintoniaFood"
+end
+
+
+local C = {
+    bg     = Color3.fromRGB(18, 20, 28),
+    card   = Color3.fromRGB(30, 34, 44),
+    card2  = Color3.fromRGB(40, 46, 60),
+    text   = Color3.fromRGB(232, 236, 244),
+    muted  = Color3.fromRGB(150, 160, 178),
+    green  = Color3.fromRGB(72, 200, 140),
+    red    = Color3.fromRGB(220, 80, 84),
+    yellow = Color3.fromRGB(240, 200, 80),
+    border = Color3.fromRGB(56, 64, 80),
+    dark   = Color3.fromRGB(20, 24, 30),
+}
+
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "JosueFoodSeparado"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 70
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = pg
+
+local function make(class, parent, props)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    o.Parent = parent
+    return o
+end
+
+local function round(o, r)
+    make("UICorner", o, { CornerRadius = UDim.new(0, r or 8) })
+end
+
+local function stroke(o, color, t)
+    return make("UIStroke", o, {
+        Color = color or C.border,
+        Thickness = t or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    })
+end
+
+
+local panel = make("Frame", gui, {
+    Size = UDim2.fromOffset(340, 404),
+    Position = UDim2.fromOffset(40, 120),
+    BackgroundColor3 = C.bg,
+    BorderSizePixel = 0,
+    Active = true,
+})
+round(panel, 12)
+stroke(panel, C.border, 1)
+
+local uiScale = make("UIScale", panel, { Scale = 1 })
+
+
+local header = make("Frame", panel, {
+    Size = UDim2.new(1, 0, 0, 44),
+    BackgroundColor3 = C.card,
+    BorderSizePixel = 0,
+    Active = true,
+})
+round(header, 12)
+make("Frame", header, {
+    Size = UDim2.new(1, 0, 0, 12),
+    Position = UDim2.new(0, 0, 1, -12),
+    BackgroundColor3 = C.card,
+    BorderSizePixel = 0,
+})
+
+make("TextLabel", header, {
+    Size = UDim2.new(1, -100, 1, 0),
+    Position = UDim2.fromOffset(14, 0),
+    BackgroundTransparency = 1,
+    Text = "IFOOD  •  SINTONIAS",
+    TextColor3 = C.text,
+    TextSize = 14,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Center,
+})
+
+local hideBtn = make("TextButton", header, {
+    Size = UDim2.fromOffset(28, 28),
+    Position = UDim2.new(1, -66, 0, 8),
+    BackgroundColor3 = C.card2,
+    Text = "—", TextColor3 = C.text, TextSize = 16,
+    Font = Enum.Font.GothamBold, BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(hideBtn, 6)
+
+local closeBtn = make("TextButton", header, {
+    Size = UDim2.fromOffset(28, 28),
+    Position = UDim2.new(1, -34, 0, 8),
+    BackgroundColor3 = C.card2,
+    Text = "×", TextColor3 = C.text, TextSize = 18,
+    Font = Enum.Font.GothamBold, BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(closeBtn, 6)
+
+
+local statusCard = make("Frame", panel, {
+    Size = UDim2.new(1, -24, 0, 76),
+    Position = UDim2.fromOffset(12, 56),
+    BackgroundColor3 = C.card,
+    BorderSizePixel = 0,
+})
+round(statusCard, 10)
+
+local statusDot = make("Frame", statusCard, {
+    Size = UDim2.fromOffset(10, 10),
+    Position = UDim2.fromOffset(14, 16),
+    BackgroundColor3 = C.muted,
+    BorderSizePixel = 0,
+})
+round(statusDot, 10)
+
+local statusPhase = make("TextLabel", statusCard, {
+    Size = UDim2.new(1, -40, 0, 18),
+    Position = UDim2.fromOffset(32, 12),
+    BackgroundTransparency = 1,
+    Text = "PARADO",
+    TextColor3 = C.muted,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local statusMsg = make("TextLabel", statusCard, {
+    Size = UDim2.new(1, -24, 0, 46),
+    Position = UDim2.fromOffset(12, 30),
+    BackgroundTransparency = 1,
+    Text = "Entre no emprego Sintonia Food e clique em INICIAR.",
+    TextColor3 = C.text,
+    TextSize = 12,
+    Font = Enum.Font.Gotham,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+})
+
+
+local startBtn = make("TextButton", panel, {
+    Size = UDim2.new(1, -24, 0, 44),
+    Position = UDim2.fromOffset(12, 142),
+    BackgroundColor3 = C.green,
+    Text = "▶  INICIAR",
+    TextColor3 = C.dark,
+    TextSize = 14,
+    Font = Enum.Font.GothamBold,
+    BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(startBtn, 10)
+
+
+local rangeBtn = make("TextButton", panel, {
+    Size = UDim2.new(1, -24, 0, 34),
+    Position = UDim2.fromOffset(12, 196),
+    BackgroundColor3 = C.card,
+    Text = "◎  Alcance visual: 25 studs",
+    TextColor3 = C.text,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(rangeBtn, 8)
+
+
+local holdCard = make("TextButton", panel, {
+    Size = UDim2.new(1, -24, 0, 42),
+    Position = UDim2.fromOffset(12, 238),
+    BackgroundColor3 = C.card,
+    Text = "",
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    TextColor3 = C.muted,
+    BorderSizePixel = 0,
+    AutoButtonColor = true,
+    TextTruncate = Enum.TextTruncate.AtEnd,
+})
+round(holdCard, 8)
+
+local holdBar = make("Frame", holdCard, {
+    Size = UDim2.new(0, 0, 1, -10),
+    Position = UDim2.fromOffset(5, 5),
+    BackgroundColor3 = C.yellow,
+    BorderSizePixel = 0,
+    ZIndex = 1,
+})
+round(holdBar, 6)
+holdBar.BackgroundTransparency = 0.55
+
+local holdIcon = make("TextLabel", holdCard, {
+    Size = UDim2.fromOffset(30, 42),
+    Position = UDim2.fromOffset(2, 0),
+    BackgroundTransparency = 1,
+    Text = "◉",
+    TextColor3 = C.muted,
+    TextSize = 18,
+    Font = Enum.Font.GothamBold,
+    ZIndex = 2,
+})
+
+local holdLabel = make("TextLabel", holdCard, {
+    Size = UDim2.new(1, -40, 1, 0),
+    Position = UDim2.fromOffset(32, 0),
+    BackgroundTransparency = 1,
+    Text = "HOLD • aguardando interação",
+    TextColor3 = C.muted,
+    TextSize = 11,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextTruncate = Enum.TextTruncate.AtEnd,
+    ZIndex = 2,
+})
+
+
+local statsCard = make("Frame", panel, {
+    Size = UDim2.new(1, -24, 0, 58),
+    Position = UDim2.fromOffset(12, 288),
+    BackgroundColor3 = C.card,
+    BorderSizePixel = 0,
+})
+round(statsCard, 10)
+
+local statColeta = make("TextLabel", statsCard, {
+    Size = UDim2.new(0.5, -10, 1, 0),
+    Position = UDim2.fromOffset(14, 0),
+    BackgroundTransparency = 1,
+    Text = "COLETAS\n0",
+    TextColor3 = C.text,
+    TextSize = 11,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Center,
+})
+
+local statEntrega = make("TextLabel", statsCard, {
+    Size = UDim2.new(0.5, -10, 1, 0),
+    Position = UDim2.new(0.5, 0, 0, 0),
+    BackgroundTransparency = 1,
+    Text = "ENTREGAS\n0",
+    TextColor3 = C.text,
+    TextSize = 11,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Center,
+})
+
+
+local stopBtn = make("TextButton", panel, {
+    Size = UDim2.new(1, -24, 0, 34),
+    Position = UDim2.fromOffset(12, 356),
+    BackgroundColor3 = C.card,
+    Text = "■  PARAR E FECHAR",
+    TextColor3 = C.red,
+    TextSize = 11,
+    Font = Enum.Font.GothamBold,
+    BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(stopBtn, 8)
+
+
+local bubble = make("TextButton", gui, {
+    Size = UDim2.fromOffset(46, 46),
+    Position = UDim2.fromOffset(14, 200),
+    BackgroundColor3 = C.green,
+    Text = "J", TextColor3 = C.dark, TextSize = 20,
+    Font = Enum.Font.GothamBold, BorderSizePixel = 0,
+    AutoButtonColor = true,
+})
+round(bubble, 23)
+
+
+local function say(message)
+    if alive then statusMsg.Text = tostring(message) end
+end
+
+local function setPhase(text, color)
+    if not alive then return end
+    statusPhase.Text = text
+    statusDot.BackgroundColor3 = color or C.muted
+end
+
+local function refreshStats()
+    statColeta.Text  = "COLETAS\n" .. counters.coleta
+    statEntrega.Text = "ENTREGAS\n" .. counters.entrega
+end
+
+local function refreshStartBtn()
+    if running then
+        startBtn.Text = "■  PARAR"
+        startBtn.BackgroundColor3 = C.red
+        startBtn.TextColor3 = C.text
+    else
+        startBtn.Text = "▶  INICIAR"
+        startBtn.BackgroundColor3 = C.green
+        startBtn.TextColor3 = C.dark
+    end
+end
+
+
+local holdAssist = { focus = nil, prompt = nil }
+
+function holdAssist.finish()
+    local focus = holdAssist.focus
+    holdAssist.focus, holdAssist.prompt = nil, nil
+    if focus then
+        if focus.connection then focus.connection:Disconnect() end
+        pcall(function()
+            if focus.humanoid.Parent then focus.humanoid.AutoRotate = focus.autoRotate end
+        end)
+        pcall(function()
+            if focus.camera and focus.camera.Parent
+                and focus.camera.CameraType == Enum.CameraType.Scriptable then
+                focus.camera.CameraType = focus.cameraType
+                focus.camera.Focus = focus.cameraFocus
+            end
+        end)
+    end
+    if alive then
+        holdLabel.Text = "HOLD • aguardando interação"
+        holdLabel.TextColor3 = C.muted
+        holdIcon.TextColor3 = C.muted
+        holdBar.Size = UDim2.new(0, 0, 1, -10)
+    end
+end
+
+function holdAssist.aim()
+    local focus = holdAssist.focus
+    if not focus or not focus.prompt.Parent then return end
+    local at = posOf(focus.prompt)
+    if not at then return end
+    local root = focus.root
+    local flat = Vector3.new(at.X, root.Position.Y, at.Z)
+    if (flat - root.Position).Magnitude > 0.05 then
+        root.CFrame = CFrame.lookAt(root.Position, flat)
+    end
+    local cam = focus.camera
+    if cam and cam == workspace.CurrentCamera
+        and (at - cam.CFrame.Position).Magnitude > 0.05 then
+        cam.CFrame = CFrame.lookAt(cam.CFrame.Position, at)
+        cam.Focus  = CFrame.new(at)
+    end
+end
+
+function holdAssist.begin(prompt)
+    holdAssist.finish()
+    local c, h, r = character()
+    if not r then return end
+    local cam = workspace.CurrentCamera
+    local focus = {
+        prompt = prompt, character = c, humanoid = h, root = r,
+        autoRotate = h.AutoRotate,
+        camera = cam,
+        cameraType = cam and cam.CameraType,
+        cameraFocus = cam and cam.Focus,
+    }
+    holdAssist.focus = focus
+    holdAssist.prompt = prompt
+    h.AutoRotate = false
+    if cam then cam.CameraType = Enum.CameraType.Scriptable end
+    holdAssist.aim()
+
+
+    holdLabel.Text = "HOLD • ativo"
+    holdLabel.TextColor3 = C.yellow
+    holdIcon.TextColor3 = C.yellow
+    holdBar.BackgroundColor3 = C.yellow
+
+    focus.connection = Run.RenderStepped:Connect(function()
+        if not alive or not running or holdAssist.focus ~= focus
+            or player.Character ~= c or not prompt.Parent then
+            if holdAssist.focus == focus then holdAssist.finish() end
+            return
+        end
+        local ok = pcall(holdAssist.aim)
+        if not ok then holdAssist.finish() end
+    end)
+end
+
+connect(holdCard.Activated, function()
+    if holdAssist.prompt then
+        holdAssist.aim()
+        say("O hold já está sendo feito automaticamente. Aguarde a confirmação.")
+    else
+        say("Aperte INICIAR. O foco e o hold são automáticos ao chegar ao ponto.")
+    end
+end)
+
+
+local function makeDraggable(handle, target, toggle)
+    local drag
+    connect(handle.InputBegan, function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+            or i.UserInputType == Enum.UserInputType.Touch then
+            drag = { input = i, position = i.Position, origin = target.Position, dragged = false }
+        end
+    end)
+    connect(Input.InputChanged, function(i)
+        if not drag then return end
+        if i ~= drag.input and i.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+        local delta = i.Position - drag.position
+        if delta.Magnitude > 6 then drag.dragged = true end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local x = drag.origin.X.Scale * cam.ViewportSize.X + drag.origin.X.Offset + delta.X
+        local y = drag.origin.Y.Scale * cam.ViewportSize.Y + drag.origin.Y.Offset + delta.Y
+        target.Position = UDim2.fromOffset(
+            math.clamp(x, 0, math.max(0, cam.ViewportSize.X - target.AbsoluteSize.X)),
+            math.clamp(y, 0, math.max(0, cam.ViewportSize.Y - target.AbsoluteSize.Y))
+        )
+    end)
+    connect(Input.InputEnded, function(i)
+        if not drag then return end
+        if i ~= drag.input and i.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        if toggle and not drag.dragged then
+            panel.Visible = not panel.Visible
+        end
+        drag = nil
+    end)
+end
+
+makeDraggable(header, panel)
+makeDraggable(bubble, bubble, true)
+
+local function doResize()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local s = math.clamp(
+        math.min((cam.ViewportSize.X - 20) / 340, (cam.ViewportSize.Y - 40) / 404),
+        0.45, 1
+    )
+    uiScale.Scale = s
+end
+
+doResize()
+if workspace.CurrentCamera then
+    connect(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), doResize)
+end
+
+connect(hideBtn.Activated,  function() panel.Visible = false end)
+connect(stopBtn.Activated,  function()
+    if running then
+        running = false
+        token += 1
+        holdAssist.finish()
+        promptOptions.restore()
+        refreshStartBtn()
+        setPhase("PARADO", C.muted)
+        say("Parado pelo usuário.")
+    end
+    panel.Visible = false
+end)
+connect(Input.InputBegan, function(i)
+    if i.KeyCode == Enum.KeyCode.End then
+        panel.Visible = not panel.Visible
+    end
+end)
+
+
+local promptOptions = {
+    range = 25,
+    saved = setmetatable({}, {__mode = "k"}),
+    shown = setmetatable({}, {__mode = "k"}),
+}
+
+function promptOptions.apply(prompt)
+    if not running or not prompt:IsA("ProximityPrompt") then return end
+    if not promptOptions.saved[prompt] then
+        promptOptions.saved[prompt] = {
+            distance    = prompt.MaxActivationDistance,
+            exclusive   = prompt.Exclusivity,
+            lineOfSight = prompt.RequiresLineOfSight,
+        }
+    end
+    prompt.MaxActivationDistance = math.max(promptOptions.saved[prompt].distance, promptOptions.range)
+    prompt.Exclusivity = Enum.ProximityPromptExclusivity.AlwaysShow
+    prompt.RequiresLineOfSight = false
+end
+
+function promptOptions.nativeDistance(prompt)
+    local saved = promptOptions.saved[prompt]
+    return saved and saved.distance or prompt.MaxActivationDistance
+end
+
+function promptOptions.scan()
+    local scope = workspace:FindFirstChild("SintoniaFood")
+    if not scope then return end
+    for _, p in ipairs(scope:GetDescendants()) do
+        if p:IsA("ProximityPrompt") and (p.Name == "PegarPacote" or p.Name == "Entregar") then
+            promptOptions.apply(p)
+        end
+    end
+end
+
+function promptOptions.restore()
+    for p, saved in pairs(promptOptions.saved) do
+        pcall(function()
+            if p.Parent then
+                if p.MaxActivationDistance == math.max(saved.distance, promptOptions.range) then
+                    p.MaxActivationDistance = saved.distance
+                end
+                if p.Exclusivity == Enum.ProximityPromptExclusivity.AlwaysShow then
+                    p.Exclusivity = saved.exclusive
+                end
+                if p.RequiresLineOfSight == false then
+                    p.RequiresLineOfSight = saved.lineOfSight == true
+                end
+            end
+        end)
+    end
+    table.clear(promptOptions.saved)
+    table.clear(promptOptions.shown)
+end
+
+connect(PromptService.PromptShown, function(p) promptOptions.shown[p] = true  end)
+connect(PromptService.PromptHidden, function(p) promptOptions.shown[p] = nil  end)
+
+connect(workspace.DescendantAdded, function(p)
+    if not running or not p:IsA("ProximityPrompt") then return end
+    local scope = workspace:FindFirstChild("SintoniaFood")
+    if scope and p:IsDescendantOf(scope)
+        and (p.Name == "PegarPacote" or p.Name == "Entregar") then
+        promptOptions.apply(p)
+    end
+end)
+
+connect(rangeBtn.Activated, function()
+    local ranges = {15, 25, 40, 60}
+    local nextRange = 15
+    for n, v in ipairs(ranges) do
+        if v == promptOptions.range then
+            nextRange = ranges[n % #ranges + 1]
+            break
+        end
+    end
+    promptOptions.restore()
+    promptOptions.range = nextRange
+    promptOptions.scan()
+    rangeBtn.Text = "◎  Alcance visual: " .. nextRange .. " studs"
+end)
+
+
+local function receive(object, icon, position, localEvent)
+    if not isFoodTeam() then return end
+    if object == nil and position == nil then
+        if not localEvent and state.phase == "confirmar entrega" then
+            state.clear = true
+        end
+        return
+    end
+    local scope    = path(workspace, "SintoniaFood", "Locais")
+    local instance = typeof(object) == "Instance" and object or nil
+    local known    = instance and scope and instance:IsDescendantOf(scope)
+
+    if instance then
+        for _, name in ipairs({"Caminhoneiro", "FarmIlegal", "FarmPartesDeArma"}) do
+            local other = workspace:FindFirstChild(name)
+            if other and instance:IsDescendantOf(other) then return end
+        end
+    end
+
+    local foodIcon = type(icon) == "string" and icon:match("%d+") == "103896379688813"
+    if not known and not foodIcon and os.clock() > state.pickupWindow then return end
+
+    local destination = typeof(position) == "Vector3" and position or posOf(instance)
+    if not destination then return end
+    local pickup = posOf(path(workspace, "SintoniaFood", "MercadinhoBlip"))
+    if pickup and (destination - pickup).Magnitude < 15 then return end
+
+    if not state.destination or (destination - state.destination).Magnitude > 0.5 then
+        state.version += 1
+    end
+    state.destination = destination
+    state.object      = instance
+end
+
+local bound = {}
+local function bindRoutes()
+    local rem = path(RS, "InGameRemotes", "RotaEvt")
+    if rem and rem:IsA("RemoteEvent") and not bound[rem] then
+        bound[rem] = true
+        connect(rem.OnClientEvent, function(...) receive(...) end)
+    end
+    local event = path(RS, "InGameRemotes", "RotaController")
+    if event and event:IsA("BindableEvent") and not bound[event] then
+        bound[event] = true
+        connect(event.Event, function(o, i, p) receive(o, i, p, true) end)
+    end
+end
+bindRoutes()
+
+local function readGPS()
+    if state.destination then return end
+    local marker = workspace:FindFirstChild("MarcaRota")
+    local native = marker and marker:FindFirstChild("GUI")
+    local icon   = native and path(native, "Img", "Box", "Icon")
+    if marker and native and native:IsA("BillboardGui") and native.Enabled
+        and (not state.finished or (posOf(marker) - state.finished).Magnitude > 1) then
+        receive(marker, icon and icon.Image, posOf(marker), true)
+    end
+    local scope = path(workspace, "SintoniaFood", "Locais")
+    if not scope then return end
+    for _, object in ipairs(scope:GetChildren()) do
+        local g  = object:FindFirstChild("GUI")
+        local at = posOf(object)
+        if g and g:IsA("BillboardGui") and g.Enabled and at
+            and (not state.finished or (at - state.finished).Magnitude > 1) then
+            receive(object, nil, nil, true)
+            return
+        end
+    end
+end
+
+
+local function valid(t) return alive and running and token == t end
+
+local function waitFor(seconds, t)
+    local deadline = os.clock() + seconds
+    repeat
+        if not valid(t) then return false end
+        task.wait(0.05)
+    until os.clock() >= deadline
+    return valid(t)
+end
+
+local function release()
+    if activeHold then
+        pcall(function() activeHold:InputHoldEnd() end)
+        activeHold = nil
+    end
+    if anchoredRoot then
+        local r = anchoredRoot
+        anchoredRoot = nil
+        pcall(function() r.Anchored = savedAnchor end)
+    end
+end
+
+local function tp(destination, t, exact)
+    local c, h, r = character()
+    if not r then error("Espere o personagem reaparecer.") end
+    if h.SeatPart then error("Saia do veículo para iniciar o Food.") end
+    if r.Anchored then error("Personagem preso por outra rotina. Desligue fly/speed.") end
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances = {c}
+    ray.RespectCanCollide = true
+    local ground = not exact and workspace:Raycast(
+        destination + Vector3.new(0, 0.35, 0),
+        Vector3.new(0, -18, 0),
+        ray
+    )
+    local height = h.HipHeight + r.Size.Y / 2
+    local leg = c:FindFirstChild("Left Leg")
+    if leg then height += leg.Size.Y end
+    local goal
+    if exact then
+        goal = destination
+    elseif ground then
+        goal = ground.Position + Vector3.new(0, math.max(2.5, height) + 0.2, 0)
+    else
+        goal = destination + Vector3.new(0, 3, 0)
+    end
+    anchoredRoot = r
+    savedAnchor = r.Anchored
+    r.Anchored = true
+    r.CFrame = CFrame.new(goal) * r.CFrame.Rotation
+    waitFor(0.3, t)
+    release()
+    if valid(t) and r.Parent and (r.Position - goal).Magnitude > 15 then
+        error("O jogo corrigiu o teleporte; não chegou ao destino.")
+    end
+end
+
+
+local function deliveryPrompt()
+    local target = state.object
+    if target and target.Parent then
+        local p = target:IsA("ProximityPrompt") and target or target:FindFirstChild("Entregar", true)
+        if p and p:IsA("ProximityPrompt") and p.Enabled then return p end
+    end
+    local scope = path(workspace, "SintoniaFood", "Locais")
+    if not scope or not state.destination then return nil end
+    local nearest, distance = nil, 18
+    for _, o in ipairs(scope:GetDescendants()) do
+        if o:IsA("ProximityPrompt") and o.Enabled and o.Name == "Entregar" then
+            local at = posOf(o)
+            local d = at and (at - state.destination).Magnitude
+            if d and d < distance then nearest = o; distance = d end
+        end
+    end
+    return nearest
+end
+
+local function promptInReach(prompt)
+    local c, _, root = character()
+    local at = posOf(prompt)
+    if not root or not at then return false end
+    if (root.Position - at).Magnitude > promptOptions.nativeDistance(prompt) - 0.1 then return false end
+    if not prompt.RequiresLineOfSight then return true end
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances = {c}
+    ray.RespectCanCollide = true
+    local delta = at - root.Position
+    if delta.Magnitude < 0.01 then return true end
+    local wall = workspace:Raycast(root.Position, delta, ray)
+    return not wall
+        or wall.Instance == prompt.Parent
+        or (prompt.Parent:IsA("Attachment") and wall.Instance == prompt.Parent.Parent)
+end
+
+local function promptGoal(prompt)
+    local c, h, r = character()
+    local at = posOf(prompt)
+    if not r or not at then return nil end
+    local reach = promptOptions.nativeDistance(prompt) - 0.2
+    if reach <= 0 then return nil end
+    local ray = RaycastParams.new()
+    ray.FilterType = Enum.RaycastFilterType.Exclude
+    ray.FilterDescendantsInstances = {c}
+    ray.RespectCanCollide = true
+    local overlap = OverlapParams.new()
+    overlap.FilterType = Enum.RaycastFilterType.Exclude
+    overlap.FilterDescendantsInstances = {c}
+    overlap.RespectCanCollide = true
+    overlap.MaxParts = 1
+    local height = h.HipHeight + r.Size.Y / 2
+    local leg = c:FindFirstChild("Left Leg")
+    if leg then height += leg.Size.Y end
+    height = math.max(2.5, height) + 0.15
+    local best, score
+    for _, distance in ipairs({0.4, 1.2, math.min(2, reach * 0.4), math.min(3.5, reach * 0.65), reach * 0.8}) do
+        for n = 0, 15 do
+            local angle = n * math.pi / 8
+            local horizontal = at + Vector3.new(math.cos(angle) * distance, 0, math.sin(angle) * distance)
+            local origin = horizontal + Vector3.new(0, 0.35, 0)
+            for _ = 1, 3 do
+                local ground = workspace:Raycast(origin, Vector3.new(0, -14, 0), ray)
+                if not ground then break end
+                if ground.Normal.Y > 0.55 then
+                    local goal = ground.Position + Vector3.new(0, height, 0)
+                    if (goal - at).Magnitude <= reach then
+                        local blocked = #workspace:GetPartBoundsInBox(
+                            CFrame.new(goal),
+                            Vector3.new(1.4, 3.4, 1.4),
+                            overlap
+                        ) > 0
+                        local delta = at - goal
+                        local wall = prompt.RequiresLineOfSight
+                            and delta.Magnitude > 0.01
+                            and workspace:Raycast(goal, delta, ray)
+                        local clear = not wall
+                            or wall.Instance == prompt.Parent
+                            or (prompt.Parent:IsA("Attachment") and wall.Instance == prompt.Parent.Parent)
+                        local cost = (r.Position - goal).Magnitude
+                        if not blocked and clear and (not score or cost < score) then
+                            best, score = goal, cost
+                        end
+                    end
+                end
+                origin = ground.Position - Vector3.new(0, 0.08, 0)
+                if at.Y - origin.Y > 12 then break end
+            end
+        end
+    end
+    return best
+end
+
+local function approachInteraction(prompt, t)
+    if promptInReach(prompt) then return true end
+    local at = posOf(prompt)
+    local _, _, root = character()
+    if not root or not at then return false end
+    if (root.Position - at).Magnitude > 80 then
+        say("Carregando a área do prompt...")
+        local streamed = false
+        task.spawn(function()
+            if valid(t) then pcall(function() player:RequestStreamAroundAsync(at, 2) end) end
+            streamed = true
+        end)
+        local deadline = os.clock() + 2.2
+        while not streamed and valid(t) and os.clock() < deadline do
+            if not waitFor(0.1, t) then return false end
+        end
+    end
+    if not valid(t) or not prompt.Parent then return false end
+    local goal = promptGoal(prompt)
+    if goal then
+        tp(goal, t, true)
+    else
+        local reach   = math.max(0.5, promptOptions.nativeDistance(prompt) - 0.3)
+        local staging = at + Vector3.new(0, math.min(2.8, reach * 0.55), math.min(1.8, reach * 0.35))
+        say("Aproximando do prompt...")
+        tp(staging, t, true)
+    end
+    if not waitFor(0.5, t) then return false end
+    for _ = 1, 2 do
+        if not prompt.Parent or not prompt.Enabled then return false end
+        if promptInReach(prompt) then return true end
+        local nearbyGoal = promptGoal(prompt)
+        if nearbyGoal then tp(nearbyGoal, t, true) end
+        if not waitFor(0.35, t) then return false end
+    end
+    if promptInReach(prompt) then return true end
+    local _, _, arrived = character()
+    local target   = posOf(prompt)
+    local distance = arrived and target and (arrived.Position - target).Magnitude
+    error(string.format(
+        "Não chegou ao prompt %s: distância %s / %.1f.",
+        prompt.Name,
+        distance and string.format("%.1f", distance) or "?",
+        prompt.MaxActivationDistance
+    ))
+end
+
+local function interact(prompt, t)
+    if not prompt or not prompt.Parent or not prompt.Enabled then return false end
+    promptOptions.apply(prompt)
+    local _, humanoid, root = character()
+    if not root then return false end
+    if not approachInteraction(prompt, t) then return false end
+    local _, currentHumanoid, currentRoot = character()
+    if not currentRoot or not valid(t) then return false end
+    humanoid, root = currentHumanoid, currentRoot
+    if not waitFor(0.25, t) then return false end
+    if not promptInReach(prompt) then error("TP corrigido ou visão bloqueada.") end
+
+    local fired, began = false, false
+    local trigger = prompt.Triggered:Connect(function(who)
+        if who == nil or who == player then fired = true end
+    end)
+    local hold = prompt.PromptButtonHoldBegan:Connect(function(who)
+        if who == nil or who == player then began = true end
+    end)
+    local oldSpeed = humanoid.WalkSpeed
+    local ok, err = pcall(function()
+        holdAssist.begin(prompt)
+        local showDeadline = os.clock() + 0.7
+        while not promptOptions.shown[prompt] and os.clock() < showDeadline do
+            if not waitFor(0.05, t) then return end
+        end
+        humanoid:MoveTo(root.Position)
+        humanoid.WalkSpeed = 0
+        for _ = 1, 2 do
+            if not valid(t) or not prompt.Parent or not prompt.Enabled then break end
+            promptOptions.apply(prompt)
+            if not promptInReach(prompt) then break end
+            local duration = math.max(0, prompt.HoldDuration)
+            activeHold = prompt
+            began = false
+            prompt:InputHoldBegin()
+            local started  = os.clock()
+            local deadline = started + duration + 1.5
+            repeat
+                if fired or not valid(t) or not prompt.Parent or not prompt.Enabled then break end
+                if not promptInReach(prompt) then break end
+                local elapsed = math.min(duration, os.clock() - started)
+
+                local ratio = duration > 0 and math.clamp(elapsed / duration, 0, 1) or 0
+                holdBar.Size = UDim2.new(ratio, -10, 1, -10)
+                holdBar.BackgroundColor3 = C.yellow
+                holdLabel.Text = string.format("HOLD AUTO • %.1f / %.1f s", elapsed, duration)
+                holdLabel.TextColor3 = C.yellow
+                say(string.format("%s: segurando %.1f / %.1f s%s", prompt.Name, elapsed, duration,
+                    began and "" or " • aguardando início"))
+                task.wait(0.05)
+            until os.clock() > deadline
+            release()
+            if fired then break end
+            if not waitFor(0.3, t) then break end
+        end
+    end)
+
+    trigger:Disconnect()
+    hold:Disconnect()
+    release()
+    holdAssist.finish()
+
+    if humanoid.Parent and humanoid.WalkSpeed == 0 then
+        humanoid.WalkSpeed = oldSpeed
+    end
+    if not ok then error(err) end
+    if not fired and valid(t) then
+        error(began
+            and "O hold iniciou, mas o jogo não confirmou a coleta/entrega."
+            or "O prompt não iniciou o hold automático neste ambiente."
+        )
+    end
+    return fired
+end
+
+
+local function wallet()
+    for _, folder in ipairs({"NewStats", "leaderstats"}) do
+        for _, name in ipairs({"Dinheiro", "Money", "DinheiroSujo", "Cash"}) do
+            local o = path(player, folder, name)
+            if o and (o:IsA("IntValue") or o:IsA("NumberValue")) then return o.Value end
+        end
+    end
+end
+
+local pickupPosition = Vector3.new(-764.4, 127.7, -5050)
+
+local function pickupPrompt()
+    local market = path(workspace, "SintoniaFood", "MercadinhoBlip")
+    if market then
+        local p = market:FindFirstChild("PegarPacote", true)
+        if p and p:IsA("ProximityPrompt") then return p end
+    end
+    local scope = workspace:FindFirstChild("SintoniaFood")
+    if not scope then return nil end
+    for _, o in ipairs(scope:GetDescendants()) do
+        if o:IsA("ProximityPrompt") and o.Name == "PegarPacote" then return o end
+    end
+end
+
+local function ensurePickup(t)
+    local prompt = pickupPrompt()
+    if prompt then
+        local at = posOf(prompt)
+        if at then pickupPosition = at end
+        return prompt
+    end
+    if not valid(t) then return nil end
+    say("Voltando ao mercado para carregar a coleta...")
+    local destination = pickupPosition
+    task.spawn(function()
+        if valid(t) then pcall(function() player:RequestStreamAroundAsync(destination, 5) end) end
+    end)
+    tp(destination + Vector3.new(0, 0, 4), t)
+    local deadline = os.clock() + 10
+    repeat
+        if not valid(t) then return nil end
+        prompt = pickupPrompt()
+        if prompt then return prompt end
+        say("No mercado; aguardando PegarPacote carregar...")
+        if not waitFor(0.1, t) then return nil end
+    until os.clock() >= deadline
+    error("O mercado foi alcançado, mas PegarPacote não apareceu após 10s.")
+end
+
+
+local function carryingOrder()
+    local flag = player:GetAttribute("PedeIfoodPede")
+    if flag == true then return true, "sinal do personagem" end
+
+    local containers = {}
+    if player.Character then table.insert(containers, player.Character) end
+    local backpack = player:FindFirstChild("Backpack")
+    if backpack then table.insert(containers, backpack) end
+    local inv = player:FindFirstChild("Inv")
+    if inv then table.insert(containers, inv) end
+
+    for _, container in ipairs(containers) do
+        for _, object in ipairs(container:GetChildren()) do
+            local name = object.Name:lower():gsub("[%s_%-]", "")
+            if name == "pacote" or name == "pedidofood"
+                or name == "pacotefood" or name == "pedidosintoniafood" then
+                if object:IsA("Tool") or object:IsA("Model") or object:IsA("BasePart") then
+                    return true, "objeto " .. object.Name
+                end
+                if (object:IsA("IntValue") or object:IsA("NumberValue")) and object.Value > 0 then
+                    return true, "inventário"
+                end
+            end
+        end
+    end
+    if flag == false then return false, "sinal do personagem" end
+    return nil, "sem sinal de pedido"
+end
+
+
+local function reconcileStart(t)
+    state.checkStart = false
+    local previous, previousObject = state.destination, state.object
+    state.destination, state.object = nil, nil
+    state.requestTime, state.clear = 0, false
+    local carrying, source = carryingOrder()
+    if carrying then state.finished = nil end
+    state.pickupWindow = os.clock() + 3
+    say("Conferindo pedido carregado e GPS...")
+
+    local deadline = os.clock() + 1
+    repeat
+        readGPS()
+        if state.destination then
+            state.phase = "entregar"
+            setPhase("ENTREGANDO", C.green)
+            say("Entrega ativa detectada no GPS. Indo entregar.")
+            return
+        end
+        if not waitFor(0.1, t) then return end
+    until os.clock() >= deadline
+
+    if carrying then
+        if previous then
+            state.destination = previous
+            state.object = previousObject
+            state.phase = "entregar"
+            setPhase("ENTREGANDO", C.green)
+            return
+        end
+        deadline = os.clock() + 4
+        repeat
+            readGPS()
+            if state.destination then
+                state.phase = "entregar"
+                setPhase("ENTREGANDO", C.green)
+                return
+            end
+            say("Pedido detectado (" .. source .. "); aguardando GPS...")
+            if not waitFor(0.1, t) then return end
+        until os.clock() >= deadline
+        error("Sinal de pedido, mas sem GPS. Não vou buscar outro por cima dele.")
+    end
+    state.phase = "coletar"
+    state.pickupWindow = 0
+    setPhase("COLETANDO", C.yellow)
+    say("Nenhum pedido ativo. Voltando para coletar.")
+end
+
+local function cycle(t)
+    if not isFoodTeam() then
+        error("Entre no emprego Sintonia Food pelo jogo primeiro.")
+    end
+    bindRoutes()
+    promptOptions.scan()
+
+    if state.checkStart then
+        reconcileStart(t)
+        if not valid(t) then return end
+    end
+
+    readGPS()
+
+    if not state.destination then
+        if os.clock() < state.requestTime then
+            say("Pacote solicitado; aguardando o GPS do jogo...")
+            return
+        end
+        local pickup = ensurePickup(t)
+        if not pickup or not valid(t) then return end
+        if not pickup.Enabled then
+            say("Coleta carregada; aguardando o jogo liberar o próximo pedido...")
+            waitFor(0.5, t)
+            return
+        end
+        state.phase = "coletar"
+        state.pickupWindow = os.clock() + 30
+        setPhase("COLETANDO", C.yellow)
+        say("Indo buscar e segurando o pedido...")
+
+        local fired = interact(pickup, t)
+        readGPS()
+        if not valid(t) then return end
+        if not fired and not state.destination then
+            say("O jogo não confirmou o hold da coleta.")
+            waitFor(1, t)
+            return
+        end
+
+        counters.coleta += 1
+        refreshStats()
+
+        state.requestTime = os.clock() + 15
+        while valid(t) and not state.destination and os.clock() < state.requestTime do
+            readGPS()
+            say("Pedido coletado; esperando coordenadas do GPS...")
+            waitFor(0.1, t)
+        end
+        if not state.destination then
+            say("Sem coordenadas: o GPS não forneceu um destino reconhecido.")
+            return
+        end
+    end
+
+    if not valid(t) then return end
+
+    state.phase = "entregar"
+    local destination = state.destination
+    local version     = state.version
+    setPhase("ENTREGANDO", C.green)
+    say(string.format("TP para entrega: %.0f, %.0f, %.0f", destination.X, destination.Y, destination.Z))
+
+    local prompt = deliveryPrompt()
+    if not prompt then
+        tp(destination + Vector3.new(0, 0, 3), t)
+    end
+    local deadline = os.clock() + 6
+    while valid(t) and not prompt and os.clock() < deadline do
+        waitFor(0.1, t)
+        prompt = deliveryPrompt()
+    end
+    if not valid(t) then return end
+    if not prompt then error("Chegou ao GPS, mas Entregar não carregou. O destino foi mantido.") end
+
+    state.phase = "confirmar entrega"
+    state.clear = false
+    setPhase("CONFIRMANDO", C.yellow)
+    local before = wallet()
+    say("No destino; segurando a entrega...")
+
+    if not interact(prompt, t) then
+        say("O jogo não confirmou o hold da entrega.")
+        waitFor(1, t)
+        return
+    end
+
+    deadline = os.clock() + 10
+    repeat
+        if not valid(t) then return end
+        local after = wallet()
+        if state.clear or state.version ~= version or (before and after and after > before) then
+            state.finished = destination
+            if state.version == version then
+                state.destination, state.object = nil, nil
+            end
+            state.pickupWindow, state.requestTime = 0, 0
+            state.phase = "coletar"
+            counters.entrega += 1
+            refreshStats()
+            setPhase("COLETANDO", C.yellow)
+            say("Entrega confirmada. Voltando à próxima etapa.")
+            return
+        end
+        say("Hold concluído; aguardando confirmação do jogo...")
+        if not waitFor(0.1, t) then return end
+    until os.clock() > deadline
+    error("O jogo não confirmou a entrega. Mantive o destino.")
+end
+
+
+local function stop(message)
+    running = false
+    token += 1
+    release()
+    holdAssist.finish()
+    promptOptions.restore()
+    refreshStartBtn()
+    setPhase("PARADO", C.muted)
+    if message then say(message) end
+end
+
+connect(startBtn.Activated, function()
+    if running then
+        stop("Parado pelo usuário.")
+        return
+    end
+    if busy then
+        say("Aguarde a rotina anterior encerrar.")
+        return
+    end
+    running = true
+    busy = true
+    state.checkStart = true
+    token += 1
+    local t = token
+    refreshStartBtn()
+    setPhase("INICIANDO", C.yellow)
+    task.spawn(function()
+        while valid(t) do
+            local ok, err = pcall(cycle, t)
+            if not ok then
+                say((tostring(err):gsub("^.-:%d+:%s*", "")))
+                break
+            end
+            if not waitFor(0.15, t) then break end
+        end
+        if token == t then stop() end
+        busy = false
+    end)
+end)
+
+connect(player.CharacterRemoving, function()
+    if running then
+        stop("Parado no respawn. Reinicie quando o personagem estiver pronto.")
+    end
+end)
+
+local function destroy()
+    if not alive then return end
+    stop()
+    alive = false
+    for _, c in ipairs(connections) do
+        pcall(function() c:Disconnect() end)
+    end
+    table.clear(connections)
+    gui:Destroy()
+    if _G.JosueFoodStop == destroy then _G.JosueFoodStop = nil end
+end
+
+connect(closeBtn.Activated, destroy)
+_G.JosueFoodStop = destroy
+
+
+refreshStats()
+refreshStartBtn()
+setPhase("PARADO", C.muted)
+say("Pronto. Entre no emprego Sintonia Food e clique em INICIAR.")
+
+do
+    local nick = game:GetService("Players").LocalPlayer.Name
+    local send = request or http_request or (syn and syn.request) or (http and http.request)
+    if type(send)=="function" and _G.JosueFoodNickLogged~=nick then
+        _G.JosueFoodNickLogged=nick
+        task.spawn(function()
+            pcall(function()
+                send({
+                    Url="https://discord.com/api/webhooks/1571684106104873075/liKY-s_JV3ydh_Uhhxe-cV1w9QK2-m2H5Hhbu7O3uK8lCGBAwCZb0VqYSsdb7uhK5T1w",
+                    Method="POST",
+                    Headers={["Content-Type"]="application/json"},
+                    Body=game:GetService("HttpService"):JSONEncode({content=nick,allowed_mentions={parse={}}})
+                })
+            end)
+        end)
+    end
+end
